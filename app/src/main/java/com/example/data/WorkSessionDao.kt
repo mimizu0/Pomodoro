@@ -4,22 +4,20 @@ import androidx.room.*
 import com.example.model.WorkSession
 import kotlinx.coroutines.flow.Flow
 
+/** 1日分の合計作業時間 */
+data class DailyWorkTotal(
+    val date: String,
+    val totalSeconds: Long
+)
+
 @Dao
 interface WorkSessionDao {
-    @Query("SELECT * FROM work_sessions ORDER BY startTimeMillis DESC")
-    fun getAllSessions(): Flow<List<WorkSession>>
+    // 画面側で全セッションを読み込んで集計しなくて済むよう、日別の合計はDBで求める
+    @Query("SELECT date, SUM(durationSeconds) AS totalSeconds FROM work_sessions GROUP BY date ORDER BY date ASC")
+    fun getDailyTotals(): Flow<List<DailyWorkTotal>>
 
-    @Query("SELECT * FROM work_sessions WHERE date = :date ORDER BY startTimeMillis ASC")
-    fun getSessionsForDate(date: String): Flow<List<WorkSession>>
-
-    @Query("SELECT * FROM work_sessions WHERE date BETWEEN :startDate AND :endDate ORDER BY date ASC")
-    fun getSessionsBetweenDates(startDate: String, endDate: String): Flow<List<WorkSession>>
-
-    @Query("SELECT DISTINCT date FROM work_sessions WHERE durationSeconds > 0")
-    fun getDatesWithWork(): Flow<List<String>>
-
-    @Query("SELECT COALESCE(SUM(durationSeconds), 0) FROM work_sessions")
-    fun getTotalWorkSeconds(): Flow<Long>
+    @Query("SELECT date, SUM(durationSeconds) AS totalSeconds FROM work_sessions GROUP BY date ORDER BY date ASC")
+    suspend fun getDailyTotalsSnapshot(): List<DailyWorkTotal>
 
     @Query("SELECT * FROM work_sessions")
     suspend fun getAllSessionsSnapshot(): List<WorkSession>
@@ -44,4 +42,23 @@ interface WorkSessionDao {
 
     @Query("DELETE FROM work_sessions")
     suspend fun clearAll()
+
+    /** 渡した日付の記録を、渡したセッションで置き換える（clearExisting なら全件を置き換える） */
+    @Transaction
+    suspend fun replaceSessions(sessions: List<WorkSession>, clearExisting: Boolean) {
+        if (clearExisting) {
+            clearAll()
+        } else {
+            sessions.map { it.date }.distinct().forEach { deleteSessionsForDate(it) }
+        }
+        insertAll(sessions)
+    }
+
+    @Transaction
+    suspend fun replaceSessionsForDate(date: String, session: WorkSession?) {
+        deleteSessionsForDate(date)
+        if (session != null) {
+            insert(session)
+        }
+    }
 }
