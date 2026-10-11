@@ -283,7 +283,7 @@ if [ "$API" -le 30 ]; then
   adb shell am start -W -n "$ACTIVITY"
   sleep 4
   shot 07b_stopwatch_after_reopen
-  check "the stopwatch screen is shown again after the screen was recreated" has "計測中"
+  check "the stopwatch screen is shown again after the screen was recreated" has "作業中"
 fi
 tap "一時停止"
 shot 08_stopwatch_paused

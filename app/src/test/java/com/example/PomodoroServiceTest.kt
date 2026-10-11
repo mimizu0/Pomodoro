@@ -323,7 +323,7 @@ class PomodoroServiceTest {
 
     assertTrue(stopwatchState.isPaused)
     assertEquals(65, stopwatchState.elapsedSeconds)
-    assertEquals("ストップウォッチ - 00:01:05", liveNotificationTitle())
+    assertEquals("作業中 - 00:01:05", liveNotificationTitle())
 
     sleepFor(Duration.ofMinutes(1))
     send(PomodoroService.ACTION_STOPWATCH_PAUSE)

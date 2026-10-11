@@ -49,6 +49,10 @@ class PomodoroService : Service() {
     private var targetEndElapsedRealtime: Long = 0L
     private var stopwatchStartElapsedRealtime: Long = 0L
 
+    // 一時停止オーバー促進リマインダー用（5分おき・作業開始まで）
+    private var pauseStartElapsedRealtime: Long = 0L
+    private var isPauseReminderMuted: Boolean = false
+
     // 通知は毎秒作り直すため、PendingIntent は使い回す
     private val contentIntent: PendingIntent by lazy {
         PendingIntent.getActivity(
@@ -84,6 +88,8 @@ class PomodoroService : Service() {
             ACTION_NEXT_PHASE -> advancePhase(isSkip = false)
             ACTION_STOP -> stopTimer()
             ACTION_ALARM_COMPLETE -> onAlarmFired()
+            ACTION_PAUSE_REMINDER -> onPauseReminderFired()
+            ACTION_MUTE_PAUSE_REMINDER -> mutePauseReminder()
             ACTION_STOPWATCH_START -> startStopwatch()
             ACTION_STOPWATCH_PAUSE -> pauseStopwatch()
             ACTION_STOPWATCH_STOP -> stopStopwatch()
@@ -117,6 +123,10 @@ class PomodoroService : Service() {
         if (_stopwatchState.value.let { it.isRunning || it.isPaused }) return
 
         dismissEventNotification()
+        cancelPauseReminder()
+        dismissPauseReminderNotification()
+        isPauseReminderMuted = false
+        pauseStartElapsedRealtime = 0L
         hasAlertedForCurrentPhase = false
         val settings = currentState.settings
         val durationSecs = settings.workDurationMinutes * 60
@@ -141,18 +151,30 @@ class PomodoroService : Service() {
 
     private fun pauseTimer() {
         val state = _timerState.value
-        if (!state.isRunning) return
+        if (!state.isRunning) {
+            // 既に一時停止中の場合は残り時間を変えず、リマインダーだけ念のため確保する
+            if (state.isPaused) ensurePauseReminderScheduled()
+            return
+        }
 
         timerJob?.cancel()
         cancelAlarm()
         _timerState.value = withCurrentTime(state).copy(isRunning = false, isPaused = true)
         updateNotification()
+        // 新しい一時停止セッション開始：ミュート解除して起点時刻を記録し、5分後に促進する
+        isPauseReminderMuted = false
+        pauseStartElapsedRealtime = SystemClock.elapsedRealtime()
+        schedulePauseReminder()
     }
 
     private fun resumeTimer() {
         val state = _timerState.value
         if (!state.isPaused) return
 
+        cancelPauseReminder()
+        dismissPauseReminderNotification()
+        isPauseReminderMuted = false
+        pauseStartElapsedRealtime = 0L
         if (state.overtimeSeconds > 0) {
             hasAlertedForCurrentPhase = true
             targetEndElapsedRealtime = SystemClock.elapsedRealtime() - (state.overtimeSeconds * 1000L)
@@ -175,6 +197,10 @@ class PomodoroService : Service() {
 
     private fun stopTimer() {
         dismissEventNotification()
+        cancelPauseReminder()
+        dismissPauseReminderNotification()
+        isPauseReminderMuted = false
+        pauseStartElapsedRealtime = 0L
         cancelAlarm()
         timerJob?.cancel()
         hasAlertedForCurrentPhase = false
@@ -465,14 +491,27 @@ class PomodoroService : Service() {
         )
 
         if (autoStart) {
+            cancelPauseReminder()
+            dismissPauseReminderNotification()
+            isPauseReminderMuted = false
+            pauseStartElapsedRealtime = 0L
             targetEndElapsedRealtime = SystemClock.elapsedRealtime() + (durationSecs * 1000L)
             scheduleAlarm(targetEndElapsedRealtime)
             runTicker()
+        } else {
+            // 自動開始しない設定での待機（一時停止）：作業開始まで5分おきに促進する
+            isPauseReminderMuted = false
+            pauseStartElapsedRealtime = SystemClock.elapsedRealtime()
+            schedulePauseReminder()
         }
         updateNotification()
     }
 
     private fun completeAllSets(state: PomodoroTimerState, notify: Boolean) {
+        cancelPauseReminder()
+        dismissPauseReminderNotification()
+        isPauseReminderMuted = false
+        pauseStartElapsedRealtime = 0L
         _timerState.value = state.copy(
             phase = PomodoroPhase.COMPLETED,
             isRunning = false,
@@ -523,6 +562,136 @@ class PomodoroService : Service() {
         val pendingIntent = alarmPendingIntent(PendingIntent.FLAG_NO_CREATE) ?: return
         alarmManager.cancel(pendingIntent)
         pendingIntent.cancel()
+    }
+
+    // ===== 一時停止オーバー促進リマインダー（5分おき・作業開始まで） =====
+
+    private fun reminderPendingIntent(flags: Int): PendingIntent? {
+        val intent = Intent(this, PomodoroNotificationReceiver::class.java).apply {
+            action = ACTION_PAUSE_REMINDER
+        }
+        return PendingIntent.getBroadcast(this, PAUSE_REMINDER_REQ_CODE, intent, flags or PendingIntent.FLAG_IMMUTABLE)
+    }
+
+    private fun schedulePauseReminder() {
+        if (isPauseReminderMuted) return
+        val pendingIntent = reminderPendingIntent(PendingIntent.FLAG_UPDATE_CURRENT) ?: return
+        val triggerAt = SystemClock.elapsedRealtime() + PAUSE_REMINDER_INTERVAL_MILLIS
+        val canScheduleExact =
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
+        try {
+            if (canScheduleExact) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    triggerAt,
+                    pendingIntent
+                )
+                return
+            }
+        } catch (_: SecurityException) {}
+
+        try {
+            alarmManager.setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                triggerAt,
+                pendingIntent
+            )
+        } catch (_: Exception) {}
+    }
+
+    private fun cancelPauseReminder() {
+        val pendingIntent = reminderPendingIntent(PendingIntent.FLAG_NO_CREATE) ?: return
+        try {
+            alarmManager.cancel(pendingIntent)
+        } catch (_: Exception) {}
+        pendingIntent.cancel()
+    }
+
+    private fun ensurePauseReminderScheduled() {
+        if (isPauseReminderMuted) return
+        if (!_timerState.value.isPaused) return
+        val existing = reminderPendingIntent(PendingIntent.FLAG_NO_CREATE)
+        if (existing == null) {
+            if (pauseStartElapsedRealtime == 0L) {
+                pauseStartElapsedRealtime = SystemClock.elapsedRealtime()
+            }
+            schedulePauseReminder()
+        }
+    }
+
+    private fun onPauseReminderFired() {
+        val state = _timerState.value
+        // 作業開始済み・停止済み・ミュート済みなら何もしない
+        if (!state.isPaused || state.isRunning) return
+        if (isPauseReminderMuted) return
+        if (state.phase == PomodoroPhase.COMPLETED) return
+        sendPauseReminderNotification(state)
+        // 作業開始されるまで5分おきに繰り返す
+        schedulePauseReminder()
+    }
+
+    private fun mutePauseReminder() {
+        isPauseReminderMuted = true
+        cancelPauseReminder()
+        dismissPauseReminderNotification()
+        updateNotification()
+    }
+
+    private fun dismissPauseReminderNotification() {
+        try {
+            NotificationManagerCompat.from(this).cancel(PAUSE_REMINDER_NOTIFICATION_ID)
+        } catch (_: Exception) {}
+    }
+
+    private fun sendPauseReminderNotification(state: PomodoroTimerState) {
+        val pausedMinutes = if (pauseStartElapsedRealtime > 0L) {
+            ((SystemClock.elapsedRealtime() - pauseStartElapsedRealtime) / 60000L).toInt().coerceAtLeast(5)
+        } else {
+            5
+        }
+        val overtimeSuffix = if (state.overtimeSeconds > 0) " 超過${state.formattedOvertime}" else ""
+        val title = "作業を開始しましょう"
+        val message = when (state.phase) {
+            PomodoroPhase.WORK ->
+                "一時停止から約${pausedMinutes}分経過 [${state.currentSet}/${state.totalSets} 残り${state.formattedTime}${overtimeSuffix}] 作業を再開しましょう"
+            PomodoroPhase.BREAK ->
+                "一時停止から約${pausedMinutes}分経過 [${state.currentSet}/${state.totalSets}] 休憩を切り上げて作業を開始しましょう"
+            PomodoroPhase.COMPLETED -> return
+        }
+
+        val builder = NotificationCompat.Builder(this, CHANNEL_EVENT_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setContentIntent(contentIntent)
+            .setAutoCancel(false)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            // イベントチャンネルは無音設定のため、ポップアップ用に空パターンを指定する
+            .setVibrate(longArrayOf(0L))
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(false)
+
+        // 通知からの操作：作業開始 / 停止 / ミュート
+        builder.addAction(
+            android.R.drawable.ic_media_play,
+            "作業開始",
+            getPendingIntent(ACTION_RESUME)
+        )
+        builder.addAction(
+            android.R.drawable.ic_menu_close_clear_cancel,
+            "停止",
+            getPendingIntent(ACTION_STOP)
+        )
+        builder.addAction(
+            android.R.drawable.ic_lock_silent_mode_off,
+            "ミュート",
+            getPendingIntent(ACTION_MUTE_PAUSE_REMINDER)
+        )
+
+        try {
+            NotificationManagerCompat.from(this).notify(PAUSE_REMINDER_NOTIFICATION_ID, builder.build())
+        } catch (_: SecurityException) {}
     }
 
     private fun createNotificationChannels() {
@@ -605,7 +774,7 @@ class PomodoroService : Service() {
         // If Stopwatch is running or paused while Pomodoro is idle
         if (!state.isActive && (stopwatch.isRunning || stopwatch.isPaused)) {
             val builder = liveNotificationBuilder(
-                title = "ストップウォッチ - ${stopwatch.formattedTime}",
+                title = "作業中 - ${stopwatch.formattedTime}",
                 text = if (stopwatch.isPaused) PAUSED_LABEL else null,
                 ongoing = stopwatch.isRunning
             )
@@ -742,7 +911,10 @@ class PomodoroService : Service() {
         private const val LEGACY_CHANNEL_EVENT_ID = "pomodoro_events_channel"
         const val NOTIFICATION_ID = 1001
         const val EVENT_NOTIFICATION_ID = 2001
+        const val PAUSE_REMINDER_NOTIFICATION_ID = 2002
         private const val ALARM_REQ_CODE = 9999
+        private const val PAUSE_REMINDER_REQ_CODE = 9998
+        const val PAUSE_REMINDER_INTERVAL_MILLIS = 5 * 60 * 1000L
 
         const val ACTION_START = "com.example.action.START"
         const val ACTION_PAUSE = "com.example.action.PAUSE"
@@ -751,6 +923,8 @@ class PomodoroService : Service() {
         const val ACTION_NEXT_PHASE = "com.example.action.NEXT_PHASE"
         const val ACTION_STOP = "com.example.action.STOP"
         const val ACTION_ALARM_COMPLETE = "com.example.action.ALARM_COMPLETE"
+        const val ACTION_PAUSE_REMINDER = "com.example.action.PAUSE_REMINDER"
+        const val ACTION_MUTE_PAUSE_REMINDER = "com.example.action.MUTE_PAUSE_REMINDER"
 
         const val ACTION_STOPWATCH_START = "com.example.action.STOPWATCH_START"
         const val ACTION_STOPWATCH_PAUSE = "com.example.action.STOPWATCH_PAUSE"

@@ -46,6 +46,7 @@ import com.example.model.StopwatchState
 const val MAX_WORK_MINUTES = 120
 const val MAX_BREAK_MINUTES = 60
 const val MAX_TOTAL_SETS = 12
+private const val MIN_INPUT_VALUE = 1
 
 private enum class EditDialogType { NONE, SETS, WORK, BREAK }
 
@@ -58,6 +59,7 @@ private val LocalUnscaledDensity = staticCompositionLocalOf<Density?> { null }
  * 円の中身は 310dp を基準にレイアウトしているため、それより狭い場合（横向き・分割画面・小型端末）は
  * 中身ごと等倍で縮小し、ボタンや文字がはみ出さないようにする。
  */
+@Suppress("UnusedBoxWithConstraintsScope") // K2モードでの誤検知対策。下の maxWidth/maxHeight は実際に使用している
 @Composable
 private fun CircleContainer(
     testTag: String,
@@ -72,7 +74,8 @@ private fun CircleContainer(
         contentAlignment = Alignment.Center
     ) {
         val density = LocalDensity.current
-        val scale = (minOf(maxWidth, maxHeight) / CIRCLE_DESIGN_SIZE).coerceIn(0.1f, 1f)
+        // 明示的な this 付けは K2 モードの UnusedBoxWithConstraintsScope 誤検知の回避策（意味は同じ）
+        val scale = (minOf(this.maxWidth, this.maxHeight) / CIRCLE_DESIGN_SIZE).coerceIn(0.1f, 1f)
         val scaledDensity = remember(density, scale) {
             Density(density.density * scale, density.fontScale)
         }
@@ -97,11 +100,11 @@ fun TimerCircleDisplay(
     onResume: () -> Unit,
     onSkip: () -> Unit,
     onStop: () -> Unit,
+    modifier: Modifier = Modifier,
     onNextPhase: () -> Unit = onSkip,
     onUpdateWorkMins: (Int) -> Unit,
     onUpdateBreakMins: (Int) -> Unit,
-    onUpdateTotalSets: (Int) -> Unit,
-    modifier: Modifier = Modifier
+    onUpdateTotalSets: (Int) -> Unit
 ) {
     val isRunningOrPaused = timerState.isRunning || timerState.isPaused
     val isCompleted = timerState.phase == PomodoroPhase.COMPLETED
@@ -637,7 +640,6 @@ private fun SetupTimerView(
             NumberInputDialog(
                 title = "セット数",
                 initialValue = settings.totalSets,
-                minValue = 1,
                 maxValue = MAX_TOTAL_SETS,
                 unit = "セット",
                 onConfirm = onUpdateTotalSets,
@@ -648,7 +650,6 @@ private fun SetupTimerView(
             NumberInputDialog(
                 title = "作業時間",
                 initialValue = settings.workDurationMinutes,
-                minValue = 1,
                 maxValue = MAX_WORK_MINUTES,
                 unit = "分",
                 onConfirm = onUpdateWorkMins,
@@ -659,7 +660,6 @@ private fun SetupTimerView(
             NumberInputDialog(
                 title = "休憩時間",
                 initialValue = settings.breakDurationMinutes,
-                minValue = 1,
                 maxValue = MAX_BREAK_MINUTES,
                 unit = "分",
                 onConfirm = onUpdateBreakMins,
@@ -755,12 +755,12 @@ private fun CircleSettingButton(
 private fun NumberInputDialog(
     title: String,
     initialValue: Int,
-    minValue: Int,
     maxValue: Int,
     unit: String,
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val minValue = MIN_INPUT_VALUE
     val initialStr = initialValue.toString()
     var textFieldValue by remember {
         mutableStateOf(
@@ -933,7 +933,7 @@ fun StopwatchCircleDisplay(
                                     .background(MaterialTheme.colorScheme.primary, CircleShape)
                             )
                             Text(
-                                text = "計測中",
+                                text = "作業中",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary
