@@ -3,6 +3,7 @@ package com.example.model
 enum class PomodoroPhase(val label: String) {
     WORK("作業中"),
     BREAK("休憩中"),
+    LONGBREAK("ロング休憩"),
     COMPLETED("全セット完了")
 }
 
@@ -15,6 +16,7 @@ enum class AppThemeMode(val label: String) {
 data class PomodoroSettings(
     val workDurationMinutes: Int = 25,
     val breakDurationMinutes: Int = 5,
+    val longBreakDurationMinutes: Int = 15,
     val totalSets: Int = 4,
     val soundEnabled: Boolean = true,
     val flashEnabled: Boolean = false,
@@ -42,11 +44,11 @@ data class PomodoroTimerState(
         get() {
             if (totalDurationSeconds <= 0) return 0f
             // 超過中は「使い切った」状態を保つ（作業は満杯、休憩は空のまま）
-            if (overtimeSeconds > 0) return if (phase == PomodoroPhase.BREAK) 0f else 1f
+            if (overtimeSeconds > 0) return if (phase == PomodoroPhase.WORK) 1f else 0f
             val elapsed = (totalDurationSeconds - timeLeftSeconds).coerceAtLeast(0)
             return when (phase) {
                 PomodoroPhase.WORK -> (elapsed.toFloat() / totalDurationSeconds.toFloat()).coerceIn(0f, 1f)
-                PomodoroPhase.BREAK -> (timeLeftSeconds.toFloat() / totalDurationSeconds.toFloat()).coerceIn(0f, 1f)
+                PomodoroPhase.BREAK, PomodoroPhase.LONGBREAK -> (timeLeftSeconds.toFloat() / totalDurationSeconds.toFloat()).coerceIn(0f, 1f)
                 PomodoroPhase.COMPLETED -> 1f
             }
         }

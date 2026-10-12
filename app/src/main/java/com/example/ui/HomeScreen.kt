@@ -38,9 +38,9 @@ import com.example.model.AppScreen
 import com.example.model.PomodoroSettings
 import com.example.model.TimerMode
 import com.example.ui.calendar.CalendarScreen
-import com.example.ui.components.SettingsSheet
 import com.example.ui.components.StopwatchCircleDisplay
 import com.example.ui.components.TimerCircleDisplay
+import com.example.ui.settings.SettingsScreen
 import com.example.ui.statistics.StatisticsScreen
 import com.example.viewmodel.PomodoroViewModel
 
@@ -72,6 +72,17 @@ fun HomeScreen(
             MainTimerView(
                 viewModel = viewModel,
                 onOpenCalendar = { viewModel.navigateTo(AppScreen.CALENDAR) },
+                onOpenSettings = { viewModel.navigateTo(AppScreen.SETTINGS) },
+                modifier = modifier
+            )
+        }
+        AppScreen.SETTINGS -> {
+            val timerState by viewModel.timerState.collectAsStateWithLifecycle()
+            val context = LocalContext.current
+            SettingsScreen(
+                settings = timerState.settings,
+                onUpdateSettings = { viewModel.updateSettings(context, it) },
+                onBack = { viewModel.navigateTo(AppScreen.MAIN) },
                 modifier = modifier
             )
         }
@@ -82,14 +93,13 @@ fun HomeScreen(
 private fun MainTimerView(
     viewModel: PomodoroViewModel,
     onOpenCalendar: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val timerState by viewModel.timerState.collectAsStateWithLifecycle()
     val stopwatchState by viewModel.stopwatchState.collectAsStateWithLifecycle()
     val timerMode by viewModel.timerMode.collectAsStateWithLifecycle()
-
-    var showSettingsSheet by remember { mutableStateOf(false) }
 
     // Dynamic notification permission for Android 13+
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -133,6 +143,7 @@ private fun MainTimerView(
                     onSkip = { viewModel.skipSet(context) },
                     onStop = { viewModel.stopTimer(context) },
                     onNextPhase = { viewModel.nextPhase(context) },
+                    onStartLongBreak = { viewModel.startLongBreak(context) },
                     onUpdateWorkMins = { viewModel.updateInlineSettings(context, workMins = it) },
                     onUpdateBreakMins = { viewModel.updateInlineSettings(context, breakMins = it) },
                     onUpdateTotalSets = { viewModel.updateInlineSettings(context, totalSets = it) }
@@ -157,7 +168,7 @@ private fun MainTimerView(
         val bottomActions: @Composable (Modifier) -> Unit = { actionsModifier ->
             BottomActions(
                 settings = timerState.settings,
-                onOpenSettings = { showSettingsSheet = true },
+                onOpenSettings = onOpenSettings,
                 onToggleSound = { viewModel.toggleQuickSound(context) },
                 onToggleVibrate = { viewModel.toggleQuickVibrate(context) },
                 onToggleFlash = { viewModel.toggleQuickFlash(context) },
@@ -227,17 +238,6 @@ private fun MainTimerView(
 
                 bottomActions(Modifier.padding(bottom = 12.dp))
             }
-        }
-
-        // Settings Modal Sheet
-        if (showSettingsSheet) {
-            SettingsSheet(
-                settings = timerState.settings,
-                onSaveSettings = { newSettings ->
-                    viewModel.updateSettings(context, newSettings)
-                },
-                onDismissRequest = { showSettingsSheet = false }
-            )
         }
     }
 }

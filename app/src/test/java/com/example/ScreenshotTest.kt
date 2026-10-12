@@ -243,10 +243,10 @@ class ScreenshotTest {
     }
     capture("${prefix}_01_main")
 
-    // 設定シート
+    // 設定画面（独立画面・保存ボタンなしで即時反映）
     composeTestRule.onNodeWithTag("footer_settings_button").performClick()
     capture("${prefix}_03_settings")
-    composeTestRule.onNodeWithTag("save_settings_button").performScrollTo().performClick()
+    composeTestRule.onNodeWithTag("settings_back_button").performClick()
 
     // ストップウォッチ
     composeTestRule.onNodeWithTag("mode_tab_stopwatch").performClick()

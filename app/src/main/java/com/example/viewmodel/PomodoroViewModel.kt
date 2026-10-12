@@ -151,6 +151,10 @@ class PomodoroViewModel(application: Application) : AndroidViewModel(application
         sendServiceAction(context, PomodoroService.ACTION_STOP)
     }
 
+    fun startLongBreak(context: Context) {
+        sendServiceAction(context, PomodoroService.ACTION_START_LONG_BREAK)
+    }
+
     // --- Stopwatch Service Actions ---
 
     fun startStopwatch(context: Context) {
@@ -175,12 +179,14 @@ class PomodoroViewModel(application: Application) : AndroidViewModel(application
         context: Context,
         workMins: Int? = null,
         breakMins: Int? = null,
+        longBreakMins: Int? = null,
         totalSets: Int? = null
     ) {
         val current = timerState.value.settings
         val updated = current.copy(
             workDurationMinutes = workMins ?: current.workDurationMinutes,
             breakDurationMinutes = breakMins ?: current.breakDurationMinutes,
+            longBreakDurationMinutes = longBreakMins ?: current.longBreakDurationMinutes,
             totalSets = totalSets ?: current.totalSets
         )
         updateSettings(context, updated)

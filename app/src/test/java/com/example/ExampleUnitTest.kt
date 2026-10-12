@@ -104,6 +104,7 @@ class ExampleUnitTest {
         val settings = PomodoroSettings()
         assertEquals(25, settings.workDurationMinutes)
         assertEquals(5, settings.breakDurationMinutes)
+        assertEquals(15, settings.longBreakDurationMinutes)
         assertEquals(4, settings.totalSets)
         assertTrue(settings.soundEnabled)
         assertFalse(settings.flashEnabled)
@@ -133,6 +134,7 @@ class ExampleUnitTest {
     fun testPhaseLabels() {
         assertEquals("作業中", PomodoroPhase.WORK.label)
         assertEquals("休憩中", PomodoroPhase.BREAK.label)
+        assertEquals("ロング休憩", PomodoroPhase.LONGBREAK.label)
         assertEquals("全セット完了", PomodoroPhase.COMPLETED.label)
     }
 

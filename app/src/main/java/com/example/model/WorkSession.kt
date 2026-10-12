@@ -71,7 +71,8 @@ fun splitByDay(
 enum class AppScreen {
     MAIN,
     CALENDAR,
-    STATISTICS
+    STATISTICS,
+    SETTINGS
 }
 
 enum class TimerMode(val label: String) {

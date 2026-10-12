@@ -8,8 +8,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
@@ -22,20 +20,14 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -46,14 +38,10 @@ import com.example.model.StopwatchState
 const val MAX_WORK_MINUTES = 120
 const val MAX_BREAK_MINUTES = 60
 const val MAX_TOTAL_SETS = 12
-private const val MIN_INPUT_VALUE = 1
 
 private enum class EditDialogType { NONE, SETS, WORK, BREAK }
 
 private val CIRCLE_DESIGN_SIZE = 310.dp
-
-// 円の縮小前の密度。円の中から開くダイアログまで縮小されないよう、ダイアログ側で元に戻すために使う
-private val LocalUnscaledDensity = staticCompositionLocalOf<Density?> { null }
 
 /**
  * 円の中身は 310dp を基準にレイアウトしているため、それより狭い場合（横向き・分割画面・小型端末）は
@@ -102,6 +90,7 @@ fun TimerCircleDisplay(
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
     onNextPhase: () -> Unit = onSkip,
+    onStartLongBreak: () -> Unit = {},
     onUpdateWorkMins: (Int) -> Unit,
     onUpdateBreakMins: (Int) -> Unit,
     onUpdateTotalSets: (Int) -> Unit
@@ -112,7 +101,7 @@ fun TimerCircleDisplay(
     // Material 3 Color Role (Strictly aligns with user's Material You theme)
     val strokeColor = when (timerState.phase) {
         PomodoroPhase.WORK -> MaterialTheme.colorScheme.primary
-        PomodoroPhase.BREAK -> MaterialTheme.colorScheme.tertiary
+        PomodoroPhase.BREAK, PomodoroPhase.LONGBREAK -> MaterialTheme.colorScheme.tertiary
         PomodoroPhase.COMPLETED -> MaterialTheme.colorScheme.secondary
     }
     val trackColor = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -186,7 +175,8 @@ fun TimerCircleDisplay(
                 isCompleted -> {
                     CompletedTimerView(
                         totalSets = timerState.totalSets,
-                        onNext = onStop
+                        onNext = onStartLongBreak,
+                        onFinish = onStop
                     )
                 }
                 isRunningOrPaused -> {
@@ -267,18 +257,22 @@ private fun ActiveTimerView(
                                     modifier = Modifier.size(16.dp)
                                 )
                             } else {
-                                val dotColor = if (timerState.phase == PomodoroPhase.BREAK) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                                val dotColor = if (timerState.phase == PomodoroPhase.WORK) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                                 Box(
                                     modifier = Modifier
                                         .size(8.dp)
                                         .background(dotColor, CircleShape)
                                 )
                             }
-                            val activeLabel = if (timerState.phase == PomodoroPhase.BREAK) "休憩継続中" else "作業継続中"
+                            val activeLabel = when (timerState.phase) {
+                                PomodoroPhase.BREAK -> "休憩継続中"
+                                PomodoroPhase.LONGBREAK -> "ロング休憩継続中"
+                                else -> "作業継続中"
+                            }
                             val textColor = when {
                                 timerState.isPaused -> MaterialTheme.colorScheme.onSecondaryContainer
-                                timerState.phase == PomodoroPhase.BREAK -> MaterialTheme.colorScheme.tertiary
-                                else -> MaterialTheme.colorScheme.primary
+                                timerState.phase == PomodoroPhase.WORK -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.tertiary
                             }
                             Text(
                                 text = if (timerState.isPaused) "一時停止中" else activeLabel,
@@ -334,7 +328,7 @@ private fun ActiveTimerView(
                                     .background(
                                         color = when (timerState.phase) {
                                             PomodoroPhase.WORK -> MaterialTheme.colorScheme.primary
-                                            PomodoroPhase.BREAK -> MaterialTheme.colorScheme.tertiary
+                                            PomodoroPhase.BREAK, PomodoroPhase.LONGBREAK -> MaterialTheme.colorScheme.tertiary
                                             PomodoroPhase.COMPLETED -> MaterialTheme.colorScheme.secondary
                                         },
                                         shape = CircleShape
@@ -345,7 +339,7 @@ private fun ActiveTimerView(
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                                 color = when (timerState.phase) {
                                     PomodoroPhase.WORK -> MaterialTheme.colorScheme.primary
-                                    PomodoroPhase.BREAK -> MaterialTheme.colorScheme.tertiary
+                                    PomodoroPhase.BREAK, PomodoroPhase.LONGBREAK -> MaterialTheme.colorScheme.tertiary
                                     PomodoroPhase.COMPLETED -> MaterialTheme.colorScheme.secondary
                                 },
                                 modifier = Modifier.testTag("active_phase_text")
@@ -471,7 +465,8 @@ private fun ActiveTimerView(
 @Composable
 private fun CompletedTimerView(
     totalSets: Int,
-    onNext: () -> Unit
+    onNext: () -> Unit,
+    onFinish: () -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -502,14 +497,31 @@ private fun CompletedTimerView(
             )
         }
 
-        Button(
-            onClick = onNext,
+        Row(
             modifier = Modifier
-                .fillMaxWidth(0.6f)
-                .height(44.dp)
-                .testTag("completed_next_button")
+                .fillMaxWidth()
+                .testTag("completed_buttons_row"),
+            horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("次へ", fontWeight = FontWeight.Bold)
+            Button(
+                onClick = onNext,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .testTag("completed_next_button")
+            ) {
+                Text("次へ", fontWeight = FontWeight.Bold)
+            }
+            OutlinedButton(
+                onClick = onFinish,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp)
+                    .testTag("completed_finish_button")
+            ) {
+                Text("終了", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -634,7 +646,7 @@ private fun SetupTimerView(
         }
     }
 
-    // Direct Keybaord Input Dialogs
+    // Direct Keyboard Input Dialogs
     when (activeDialog) {
         EditDialogType.SETS -> {
             NumberInputDialog(
@@ -748,94 +760,6 @@ private fun CircleSettingButton(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun NumberInputDialog(
-    title: String,
-    initialValue: Int,
-    maxValue: Int,
-    unit: String,
-    onConfirm: (Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val minValue = MIN_INPUT_VALUE
-    val initialStr = initialValue.toString()
-    var textFieldValue by remember {
-        mutableStateOf(
-            TextFieldValue(
-                text = initialStr,
-                selection = TextRange(0, initialStr.length)
-            )
-        )
-    }
-    val focusRequester = remember { FocusRequester() }
-    var isError by remember { mutableStateOf(false) }
-
-    CompositionLocalProvider(LocalDensity provides (LocalUnscaledDensity.current ?: LocalDensity.current)) {
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text(text = title) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        value = textFieldValue,
-                        onValueChange = { input ->
-                            val digits = input.text.filter { it.isDigit() }
-                            textFieldValue = input.copy(text = digits)
-                            val num = digits.toIntOrNull()
-                            isError = num == null || num !in minValue..maxValue
-                        },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Number,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                val num = textFieldValue.text.toIntOrNull()
-                                if (num != null && num in minValue..maxValue) {
-                                    onConfirm(num)
-                                    onDismiss()
-                                }
-                            }
-                        ),
-                        suffix = if (unit.isNotEmpty()) { { Text(unit) } } else null,
-                        isError = isError,
-                        supportingText = { Text("$minValue〜$maxValue$unit") },
-                        singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(focusRequester)
-                    )
-
-                    // 入力欄が配置された後でフォーカスを要求する（ダイアログの外側で要求すると、
-                    // 中身の構築より先に実行されて例外になることがある）
-                    LaunchedEffect(Unit) {
-                        focusRequester.requestFocus()
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val num = textFieldValue.text.toIntOrNull()
-                        if (num != null && num in minValue..maxValue) {
-                            onConfirm(num)
-                            onDismiss()
-                        }
-                    },
-                    enabled = !isError && textFieldValue.text.isNotEmpty()
-                ) {
-                    Text("保存")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = onDismiss) {
-                    Text("キャンセル")
-                }
-            }
-        )
     }
 }
 

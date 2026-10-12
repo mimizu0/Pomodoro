@@ -88,6 +88,7 @@ class PomodoroService : Service() {
             ACTION_NEXT_PHASE -> advancePhase(isSkip = false)
             ACTION_STOP -> stopTimer()
             ACTION_ALARM_COMPLETE -> onAlarmFired()
+            ACTION_START_LONG_BREAK -> startLongBreak()
             ACTION_PAUSE_REMINDER -> onPauseReminderFired()
             ACTION_MUTE_PAUSE_REMINDER -> mutePauseReminder()
             ACTION_STOPWATCH_START -> startStopwatch()
@@ -147,6 +148,37 @@ class PomodoroService : Service() {
 
         updateNotification()
         runTicker()
+    }
+
+    /** 全セット完了画面の「次へ」からロング休憩を開始する（設定の分数・即開始） */
+    private fun startLongBreak() {
+        val state = _timerState.value
+        if (state.phase != PomodoroPhase.COMPLETED) return
+        if (_stopwatchState.value.let { it.isRunning || it.isPaused }) return
+
+        dismissEventNotification()
+        cancelPauseReminder()
+        dismissPauseReminderNotification()
+        isPauseReminderMuted = false
+        pauseStartElapsedRealtime = 0L
+        hasAlertedForCurrentPhase = false
+
+        val durationSecs = state.settings.longBreakDurationMinutes * 60
+        _timerState.value = state.copy(
+            phase = PomodoroPhase.LONGBREAK,
+            totalDurationSeconds = durationSecs,
+            timeLeftSeconds = durationSecs,
+            overtimeSeconds = 0,
+            isRunning = true,
+            isPaused = false
+        )
+
+        targetEndElapsedRealtime = SystemClock.elapsedRealtime() + (durationSecs * 1000L)
+        scheduleAlarm(targetEndElapsedRealtime)
+
+        updateNotification()
+        runTicker()
+        sendPhaseStartNotification("ロング休憩開始", state.settings.longBreakDurationMinutes)
     }
 
     private fun pauseTimer() {
@@ -238,7 +270,8 @@ class PomodoroService : Service() {
 
     private fun isOvertimeMode(state: PomodoroTimerState): Boolean =
         (state.phase == PomodoroPhase.WORK && state.settings.continueWorkUntilManual) ||
-            (state.phase == PomodoroPhase.BREAK && state.settings.continueBreakUntilManual)
+            (state.phase == PomodoroPhase.BREAK && state.settings.continueBreakUntilManual) ||
+            (state.phase == PomodoroPhase.LONGBREAK && state.settings.continueBreakUntilManual)
 
     // 超過計測中に継続設定をオフにされても、それまでの超過分は捨てない
     private fun countsOvertime(state: PomodoroTimerState): Boolean =
@@ -361,6 +394,8 @@ class PomodoroService : Service() {
         val setLabel = "[${state.currentSet}/${state.settings.totalSets}]"
         if (state.phase == PomodoroPhase.WORK) {
             sendPushEventNotification(title = "作業終了 $setLabel", message = "作業継続中")
+        } else if (state.phase == PomodoroPhase.LONGBREAK) {
+            sendPushEventNotification(title = "ロング休憩終了 $setLabel", message = "ロング休憩継続中")
         } else {
             sendPushEventNotification(title = "休憩終了 $setLabel", message = "休憩継続中")
         }
@@ -466,6 +501,26 @@ class PomodoroService : Service() {
                     }
                 } else {
                     completeAllSets(state, notify = !isSkip)
+                }
+            }
+            PomodoroPhase.LONGBREAK -> {
+                // ロング休憩が終わったらそのまま次のサイクルの作業を開始する
+                enterPhase(
+                    state = state,
+                    phase = PomodoroPhase.WORK,
+                    currentSet = 1,
+                    durationMins = settings.workDurationMinutes,
+                    autoStart = settings.autoStartWork
+                )
+                if (!isSkip) {
+                    if (settings.autoStartWork) {
+                        sendPhaseStartNotification("作業開始 [1/${settings.totalSets}]", settings.workDurationMinutes)
+                    } else {
+                        sendPushEventNotification(
+                            title = "ロング休憩終了",
+                            message = "作業は開始待ちです"
+                        )
+                    }
                 }
             }
             PomodoroPhase.COMPLETED -> stopTimer()
@@ -626,7 +681,7 @@ class PomodoroService : Service() {
         if (isPauseReminderMuted) return
         if (state.phase == PomodoroPhase.COMPLETED) return
         sendPauseReminderNotification(state)
-        // 作業開始されるまで5分おきに繰り返す
+        // 作業再開されるまで5分おきに繰り返す
         schedulePauseReminder()
     }
 
@@ -650,12 +705,14 @@ class PomodoroService : Service() {
             5
         }
         val overtimeSuffix = if (state.overtimeSeconds > 0) " 超過${state.formattedOvertime}" else ""
-        val title = "作業を開始しましょう"
+        val title = "作業を再開しましょう"
         val message = when (state.phase) {
             PomodoroPhase.WORK ->
                 "一時停止から約${pausedMinutes}分経過 [${state.currentSet}/${state.totalSets} 残り${state.formattedTime}${overtimeSuffix}] 作業を再開しましょう"
             PomodoroPhase.BREAK ->
-                "一時停止から約${pausedMinutes}分経過 [${state.currentSet}/${state.totalSets}] 休憩を切り上げて作業を開始しましょう"
+                "一時停止から約${pausedMinutes}分経過 [${state.currentSet}/${state.totalSets}] 休憩を切り上げて作業を再開しましょう"
+            PomodoroPhase.LONGBREAK ->
+                "一時停止から約${pausedMinutes}分経過 [ロング休憩 残り${state.formattedTime}${overtimeSuffix}] 休憩を切り上げて作業を再開しましょう"
             PomodoroPhase.COMPLETED -> return
         }
 
@@ -672,10 +729,10 @@ class PomodoroService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(false)
 
-        // 通知からの操作：作業開始 / 停止 / ミュート
+        // 通知からの操作：作業再開 / 停止 / ミュート
         builder.addAction(
             android.R.drawable.ic_media_play,
-            "作業開始",
+            "作業再開",
             getPendingIntent(ACTION_RESUME)
         )
         builder.addAction(
@@ -810,7 +867,11 @@ class PomodoroService : Service() {
         val isOvertime = state.overtimeSeconds > 0
         val setLabel = "[${state.currentSet}/${state.totalSets}]"
         val title = if (isOvertime) {
-            val label = if (state.phase == PomodoroPhase.WORK) "作業継続中" else "休憩継続中"
+            val label = when (state.phase) {
+                PomodoroPhase.WORK -> "作業継続中"
+                PomodoroPhase.LONGBREAK -> "ロング休憩継続中"
+                else -> "休憩継続中"
+            }
             "$label $setLabel - 超過 ${state.formattedOvertime}"
         } else {
             "${state.phase.label} $setLabel - 残り ${state.formattedTime}"
@@ -848,7 +909,7 @@ class PomodoroService : Service() {
             )
         }
 
-        if (!isOvertime) {
+        if (!isOvertime && state.phase != PomodoroPhase.LONGBREAK) {
             builder.addAction(
                 android.R.drawable.ic_media_next,
                 "スキップ",
@@ -923,6 +984,7 @@ class PomodoroService : Service() {
         const val ACTION_NEXT_PHASE = "com.example.action.NEXT_PHASE"
         const val ACTION_STOP = "com.example.action.STOP"
         const val ACTION_ALARM_COMPLETE = "com.example.action.ALARM_COMPLETE"
+        const val ACTION_START_LONG_BREAK = "com.example.action.START_LONG_BREAK"
         const val ACTION_PAUSE_REMINDER = "com.example.action.PAUSE_REMINDER"
         const val ACTION_MUTE_PAUSE_REMINDER = "com.example.action.MUTE_PAUSE_REMINDER"
 

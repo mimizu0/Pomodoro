@@ -271,7 +271,7 @@ tap "サウンド切り替え"
 check "completed screen survives a quick toggle" has "全セット完了"
 tap "サウンド切り替え"
 
-# 完了 → ストップウォッチを使って停止 → ポモドーロに戻って「次へ」（以前はここでクラッシュ）
+# 完了 → ストップウォッチを使って停止 → ポモドーロに戻って「次へ」でロング休憩（以前はここでクラッシュ）
 tap "ストップウォッチ"
 tap "開始"
 sleep 4
@@ -291,8 +291,14 @@ tap "停止して記録"
 tap "ポモドーロタイマー#2"   # 1つ目は画面タイトル、2つ目がモード切り替えのタブ
 tap "次へ"
 sleep 3
-shot 09_back_to_setup
-check "app is alive after dismissing the completed screen" alive
+shot 09_long_break_running
+check "long break started from the completed screen" has "ロング休憩"
+notifications > "$OUT/notif_longbreak.txt"
+check "long break start notification" grep -q "ロング休憩開始" "$OUT/notif_longbreak.txt"
+tap "停止"
+sleep 3
+shot 09b_back_to_setup
+check "app is alive after stopping the long break" alive
 check "setup screen is shown again" has "開始"
 
 # --- シナリオB: 1分×2セット。画面を出したまま休憩に入る ---------------------------

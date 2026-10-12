@@ -232,6 +232,64 @@ class PomodoroServiceTest {
   }
 
   @Test
+  fun `long break starts from the completed screen and continues into the next cycle`() {
+    applySettings(PomodoroSettings(totalSets = 1, longBreakDurationMinutes = 15))
+    send(PomodoroService.ACTION_START)
+    runFor(Duration.ofSeconds(25 * 60 + 1))
+    assertEquals(PomodoroPhase.COMPLETED, timerState.phase)
+
+    send(PomodoroService.ACTION_START_LONG_BREAK)
+    assertEquals(PomodoroPhase.LONGBREAK, timerState.phase)
+    assertTrue(timerState.isRunning)
+    assertEquals(15 * 60, timerState.timeLeftSeconds)
+    assertEquals("ロング休憩 [1/1] - 残り 15:00", liveNotificationTitle())
+
+    // スリープ中に相当：ティッカーを動かさず時間を進めてアラームで遷移させる
+    sleepFor(Duration.ofMinutes(15))
+    send(PomodoroService.ACTION_ALARM_COMPLETE)
+    assertEquals(PomodoroPhase.WORK, timerState.phase)
+    assertEquals(1, timerState.currentSet)
+    assertTrue(timerState.isRunning)
+    assertEquals(25 * 60, timerState.timeLeftSeconds)
+    assertEquals("作業開始 [1/1]" to "残り 25:00", eventNotificationTitleAndText())
+  }
+
+  @Test
+  fun `stop during a long break returns to setup`() {
+    applySettings(PomodoroSettings(totalSets = 1))
+    send(PomodoroService.ACTION_START)
+    runFor(Duration.ofSeconds(25 * 60 + 1))
+    send(PomodoroService.ACTION_START_LONG_BREAK)
+    assertEquals(PomodoroPhase.LONGBREAK, timerState.phase)
+
+    sleepFor(Duration.ofSeconds(60))
+    send(PomodoroService.ACTION_STOP)
+
+    assertFalse(timerState.isRunning)
+    assertFalse(timerState.isPaused)
+    assertEquals(PomodoroPhase.WORK, timerState.phase)
+    assertEquals(25 * 60, timerState.timeLeftSeconds)
+    assertTrue(shadowOf(controller.get()).isStoppedBySelf)
+  }
+
+  @Test
+  fun `pause keeps the remaining time during a long break`() {
+    applySettings(PomodoroSettings(totalSets = 1))
+    send(PomodoroService.ACTION_START)
+    runFor(Duration.ofSeconds(25 * 60 + 1))
+    send(PomodoroService.ACTION_START_LONG_BREAK)
+    runFor(Duration.ofSeconds(10))
+    send(PomodoroService.ACTION_PAUSE)
+
+    assertTrue(timerState.isPaused)
+    assertFalse(timerState.isRunning)
+    assertEquals(15 * 60 - 10, timerState.timeLeftSeconds)
+
+    send(PomodoroService.ACTION_RESUME)
+    assertTrue(timerState.isRunning)
+  }
+
+  @Test
   fun `overtime keeps counting until next is pressed and is included in the record`() {
     applySettings(PomodoroSettings(continueWorkUntilManual = true))
     send(PomodoroService.ACTION_START)

@@ -13,6 +13,7 @@ class PreferencesManager(context: Context) {
         prefs.edit().apply {
             putInt(KEY_WORK_MINS, settings.workDurationMinutes)
             putInt(KEY_BREAK_MINS, settings.breakDurationMinutes)
+            putInt(KEY_LONG_BREAK_MINS, settings.longBreakDurationMinutes)
             putInt(KEY_TOTAL_SETS, settings.totalSets)
             putBoolean(KEY_SOUND_ENABLED, settings.soundEnabled)
             putBoolean(KEY_FLASH_ENABLED, settings.flashEnabled)
@@ -29,6 +30,7 @@ class PreferencesManager(context: Context) {
     fun loadSettings(): PomodoroSettings {
         val workMins = prefs.getInt(KEY_WORK_MINS, 25)
         val breakMins = prefs.getInt(KEY_BREAK_MINS, 5)
+        val longBreakMins = prefs.getInt(KEY_LONG_BREAK_MINS, 15)
         val totalSets = prefs.getInt(KEY_TOTAL_SETS, 4)
         val soundEnabled = prefs.getBoolean(KEY_SOUND_ENABLED, true)
         val flashEnabled = prefs.getBoolean(KEY_FLASH_ENABLED, false)
@@ -47,6 +49,7 @@ class PreferencesManager(context: Context) {
         return PomodoroSettings(
             workDurationMinutes = workMins,
             breakDurationMinutes = breakMins,
+            longBreakDurationMinutes = longBreakMins,
             totalSets = totalSets,
             soundEnabled = soundEnabled,
             flashEnabled = flashEnabled,
@@ -62,6 +65,7 @@ class PreferencesManager(context: Context) {
     companion object {
         private const val KEY_WORK_MINS = "work_mins"
         private const val KEY_BREAK_MINS = "break_mins"
+        private const val KEY_LONG_BREAK_MINS = "long_break_mins"
         private const val KEY_TOTAL_SETS = "total_sets"
         private const val KEY_SOUND_ENABLED = "sound_enabled"
         private const val KEY_FLASH_ENABLED = "flash_enabled"
