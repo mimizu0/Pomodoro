@@ -195,6 +195,11 @@ class ScreenshotTest {
     // 描画も CPU 使用も発生しないことを確認済み（.github/scripts/smoke.sh の MEASURE）
     composeTestRule.mainClock.autoAdvance = false
     composeTestRule.onNodeWithTag("setup_total_sets_value", useUnmergedTree = true).performClick()
+    // ダイアログの表示にはメインルーパーの処理も必要なため、時計と合わせて回す
+    repeat(50) {
+      shadowOf(Looper.getMainLooper()).idle()
+      composeTestRule.mainClock.advanceTimeBy(100)
+    }
     composeTestRule.mainClock.advanceTimeBy(1_000)
     captureScreenRoboImage("build/outputs/roborazzi/number_dialog.png")
     composeTestRule.onNodeWithText("セット数").assertExists()
@@ -269,7 +274,11 @@ class ScreenshotTest {
     composeTestRule.waitForIdle()
     withManualClock {
       composeTestRule.onNodeWithTag("menu_import_json").performClick()
-      composeTestRule.mainClock.advanceTimeBy(1_000)
+      // ダイアログの表示にはメインルーパーの処理も必要なため、時計と合わせて回す
+      repeat(50) {
+        shadowOf(Looper.getMainLooper()).idle()
+        composeTestRule.mainClock.advanceTimeBy(100)
+      }
       captureNow("${prefix}_07_import_dialog")
       composeTestRule.onNodeWithTag("import_pick_file_button").assertExists()
       composeTestRule.onNodeWithText("キャンセル").performClick()
